@@ -1,0 +1,89 @@
+name: queueforge
+
+x-core: &core
+  build:
+    context: ./backend
+  environment: &core-env
+    DATABASE_URL: postgresql://queueforge:queueforge-local-only@postgres:5432/queueforge
+    LEASE_MS: "6000"
+    HEARTBEAT_MS: "1800"
+    CLAIM_POLL_MS: "100"
+    REAPER_POLL_MS: "250"
+    WORKER_CONCURRENCY: "4"
+    WORKER_QUEUES: default,critical,media
+    LOG_LEVEL: info
+    BUILD_VERSION: local
+  depends_on:
+    postgres:
+      condition: service_healthy
+  networks: [queueforge]
+
+services:
+  postgres:
+    image: postgres:17.6-alpine
+    environment:
+      POSTGRES_DB: queueforge
+      POSTGRES_USER: queueforge
+      POSTGRES_PASSWORD: queueforge-local-only
+    ports:
+      - "127.0.0.1:54329:5432"
+    volumes:
+      - queueforge-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U queueforge -d queueforge"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+    networks: [queueforge]
+
+  api:
+    <<: *core
+    container_name: queueforge-api
+    command: ["api"]
+    environment:
+      <<: *core-env
+      API_PORT: "8080"
+    ports:
+      - "127.0.0.1:18080:8080"
+
+  worker-a:
+    <<: *core
+    container_name: queueforge-worker-a
+    command: ["worker"]
+    environment:
+      <<: *core-env
+      WORKER_NAME: worker-a
+
+  worker-b:
+    <<: *core
+    container_name: queueforge-worker-b
+    command: ["worker"]
+    environment:
+      <<: *core-env
+      WORKER_NAME: worker-b
+
+  worker-c:
+    <<: *core
+    container_name: queueforge-worker-c
+    command: ["worker"]
+    environment:
+      <<: *core-env
+      WORKER_NAME: worker-c
+
+  k6:
+    image: grafana/k6:2.0.0
+    profiles: [load]
+    environment:
+      BASE_URL: http://api:8080
+    volumes:
+      - ./load:/scripts:ro
+      - ./evidence/raw:/results
+    networks: [queueforge]
+
+networks:
+  queueforge:
+    name: queueforge
+
+volumes:
+  queueforge-data:
+    name: queueforge-data
